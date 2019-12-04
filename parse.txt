@@ -1,0 +1,193 @@
+.rel.plt节是用于函数重定位，.rel.dyn节是用于变量重定位。.rel.plt节相关的Elf32_Rel结构如下:
+
+typedef struct elf64_rel {
+  Elf64_Addr r_offset;	/* Location at which to apply the action */
+  Elf64_Xword r_info;	/* index and type of relocation */
+} Elf64_Rel;
+
+#define ELF64_R_SYM(i)			((i) >> 32)   /*在.dynsym中的索引*/
+#define ELF64_R_TYPE(i)			((i) & 0xffffffff)
+
+
+[root@VM_14_30_centos ~/retdlresolve]# readelf -r demo
+Relocation section '.rela.dyn' at offset 0x428 contains 3 entries:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+000000600ff8  000600000006 R_X86_64_GLOB_DAT 0000000000000000 __gmon_start__ + 0
+000000601050  000700000005 R_X86_64_COPY     0000000000601050 stdout + 0
+000000601058  000800000005 R_X86_64_COPY     0000000000601058 stdin + 0
+
+Relocation section '.rela.plt' at offset 0x470 contains 6 entries:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+000000601018  000100000007 R_X86_64_JUMP_SLO 0000000000000000 write + 0
+000000601020  000200000007 R_X86_64_JUMP_SLO 0000000000000000 strlen + 0
+000000601028  000300000007 R_X86_64_JUMP_SLO 0000000000000000 setbuf + 0
+000000601030  000400000007 R_X86_64_JUMP_SLO 0000000000000000 read + 0
+000000601038  000500000007 R_X86_64_JUMP_SLO 0000000000000000 __libc_start_main + 0
+000000601040  000600000007 R_X86_64_JUMP_SLO 0000000000000000 __gmon_start__ + 0
+
+
+[root@VM_14_30_centos ~/retdlresolve]# objdump -s -j .rela.dyn demo
+demo:     file format elf64-x86-64
+
+Contents of section .rela.dyn:
+ 400428 f80f6000 00000000 06000000 06000000  ..`.............
+ 400438 00000000 00000000 50106000 00000000  ........P.`.....
+ 400448 05000000 07000000 00000000 00000000  ................
+ 400458 58106000 00000000 05000000 08000000  X.`.............
+ 400468 00000000 00000000                    ........       
+
+
+/*函数的重定位信息*/
+[root@VM_14_30_centos ~/retdlresolve]# objdump -s -j .rela.plt demo
+demo:     file format elf64-x86-64
+
+Contents of section .rela.plt:
+ 400470 18106000 00000000 07000000 01000000  ..`.............  /*8个字节为一组，小端字节序，Offset:0x601018 Info:0x0100000007，write函数的重定位信息*/
+ 400480 00000000 00000000 20106000 00000000  ........ .`.....  /*Offset 0x601018对应着.got.plt段中的位置，最终重定位write函数后的地址需要写入该地址0x601018中*/
+ 400490 07000000 02000000 00000000 00000000  ................  /*Info中高4个字节表明该符号的描述信息在.dynsym中的索引为1*/
+ 4004a0 28106000 00000000 07000000 03000000  (.`.............
+ 4004b0 00000000 00000000 30106000 00000000  ........0.`.....
+ 4004c0 07000000 04000000 00000000 00000000  ................
+ 4004d0 38106000 00000000 07000000 05000000  8.`.............
+ 4004e0 00000000 00000000 40106000 00000000  ........@.`.....
+ 4004f0 07000000 06000000 00000000 00000000  ................
+
+
+
+/*第1项保存.dynamic节的地址，第2项保存link_map的地址，第3项保存dl_resolve的地址，需要加载镜像后才会保存对应地址*/
+/*.got节保存全局变量偏移表，.got.plt节保存全局函数偏移表，.got.plt属于数据段，所以可以在运行时修改*/
+[root@VM_14_30_centos ~/retdlresolve]# objdump -s -j .got.plt demo
+demo:     file format elf64-x86-64
+
+Contents of section .got.plt:
+ 601000 280e6000 00000000 00000000 00000000  (.`.............   /*8个字节为一组，第1/2/3项预留保存固定项的值，第4项开始存储需要重定位的函数的地址*/
+ 601010 00000000 00000000 36054000 00000000  ........6.@.....   /*因为此时镜像还未被加载，所以此处的地址是再跳转回.plt段中对应位置，可以看到此处保存的地址是0x400536*/
+ 601020 46054000 00000000 56054000 00000000  F.@.....V.@.....   /*对应着.plt段中的write@plt的下一条指令pushq $0x0的地址，当重定位完成后此处就会保存真正的write函数地址*/
+ 601030 66054000 00000000 76054000 00000000  f.@.....v.@.....
+ 601040 86054000 00000000                    ..@.....       
+
+
+/*.plt属于代码段，.got.plt属于数据段，通过.plt和.got.plt完成函数的重定位*/
+Disassembly of section .plt:
+
+0000000000400520 <write@plt-0x10>:
+  400520:	ff 35 e2 0a 20 00    	pushq  0x200ae2(%rip)        # 601008 <_GLOBAL_OFFSET_TABLE_+0x8>    /*把.got.plt中第二项的地址入栈*/
+  400526:	ff 25 e4 0a 20 00    	jmpq   *0x200ae4(%rip)        # 601010 <_GLOBAL_OFFSET_TABLE_+0x10>   /*调用.got.plt中第三项保存的_dl_runtime_resolve_xsavec函数*/
+  40052c:	0f 1f 40 00          	nopl   0x0(%rax)
+
+0000000000400530 <write@plt>:
+  400530:	ff 25 e2 0a 20 00    	jmpq   *0x200ae2(%rip)        # 601018 <_GLOBAL_OFFSET_TABLE_+0x18>   /*跳转到.got.plt中对应的地址处存储的write的地址，在第一次访问时还未*/
+  400536:	68 00 00 00 00       	pushq  $0x0                             /*完成重定位，此时0x601018处保存的地址就是当前指令的下一条指令的地址，所以相当于会跳转回0x400536处*/
+  40053b:	e9 e0 ff ff ff       	jmpq   400520 <_init+0x20>   /*push指令主要是为了调用解析函数前准备参数*/
+
+0000000000400540 <strlen@plt>:
+  400540:	ff 25 da 0a 20 00    	jmpq   *0x200ada(%rip)        # 601020 <_GLOBAL_OFFSET_TABLE_+0x20>
+  400546:	68 01 00 00 00       	pushq  $0x1
+  40054b:	e9 d0 ff ff ff       	jmpq   400520 <_init+0x20>     /*每一项都会跳转到第一项*/
+
+0000000000400550 <setbuf@plt>:
+  400550:	ff 25 d2 0a 20 00    	jmpq   *0x200ad2(%rip)        # 601028 <_GLOBAL_OFFSET_TABLE_+0x28>
+  400556:	68 02 00 00 00       	pushq  $0x2
+  40055b:	e9 c0 ff ff ff       	jmpq   400520 <_init+0x20>
+
+0000000000400560 <read@plt>:
+  400560:	ff 25 ca 0a 20 00    	jmpq   *0x200aca(%rip)        # 601030 <_GLOBAL_OFFSET_TABLE_+0x30>
+  400566:	68 03 00 00 00       	pushq  $0x3
+  40056b:	e9 b0 ff ff ff       	jmpq   400520 <_init+0x20>
+
+0000000000400570 <__libc_start_main@plt>:
+  400570:	ff 25 c2 0a 20 00    	jmpq   *0x200ac2(%rip)        # 601038 <_GLOBAL_OFFSET_TABLE_+0x38>
+  400576:	68 04 00 00 00       	pushq  $0x4
+  40057b:	e9 a0 ff ff ff       	jmpq   400520 <_init+0x20>
+
+0000000000400580 <__gmon_start__@plt>:
+  400580:	ff 25 ba 0a 20 00    	jmpq   *0x200aba(%rip)        # 601040 <_GLOBAL_OFFSET_TABLE_+0x40>
+  400586:	68 05 00 00 00       	pushq  $0x5
+  40058b:	e9 90 ff ff ff       	jmpq   400520 <_init+0x20>
+
+
+
+/*.dynsym节包含了动态链接符号表*/
+[root@VM_14_30_centos ~/retdlresolve]# readelf -s demo
+Symbol table '.dynsym' contains 9 entries:
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND 
+     1: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND write@GLIBC_2.2.5 (2)
+     2: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND strlen@GLIBC_2.2.5 (2)
+     3: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND setbuf@GLIBC_2.2.5 (2)
+     4: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND read@GLIBC_2.2.5 (2)
+     5: 0000000000000000     0 FUNC    GLOBAL DEFAULT  UND __libc_start_main@GLIBC_2.2.5 (2)
+     6: 0000000000000000     0 NOTYPE  WEAK   DEFAULT  UND __gmon_start__
+     7: 0000000000601050     8 OBJECT  GLOBAL DEFAULT   25 stdout@GLIBC_2.2.5 (2)
+     8: 0000000000601058     8 OBJECT  GLOBAL DEFAULT   25 stdin@GLIBC_2.2.5 (2)
+
+
+typedef __u64	Elf64_Addr;
+typedef __u16	Elf64_Half;
+typedef __s16	Elf64_SHalf;
+typedef __u64	Elf64_Off;
+typedef __s32	Elf64_Sword;
+typedef __u32	Elf64_Word;
+typedef __u64	Elf64_Xword;
+typedef __s64	Elf64_Sxword;
+
+typedef struct elf64_sym {
+  Elf64_Word st_name;		/* Symbol name, index in string tbl, 4bytes*/
+  unsigned char	st_info;	/* Type and binding attributes*/
+  unsigned char	st_other;	/* No defined meaning, 0 */
+  Elf64_Half st_shndx;		/* Associated section index, 2bytes*/
+  Elf64_Addr st_value;		/* Value of the symbol, 8bytes*/
+  Elf64_Xword st_size;		/* Associated symbol size, 8bytes*/
+} Elf64_Sym;
+
+[root@VM_14_30_centos ~/retdlresolve]# objdump -s -j .dynsym demo
+demo:     file format elf64-x86-64
+
+Contents of section .dynsym:
+ 4002c0 00000000 00000000 00000000 00000000  ................  /*24个字节为一组*/
+ 4002d0 00000000 00000000 3d000000 12000000  ........=.......  /*write符号在该段的索引为1，所以从0x4002d8开始为对应的符号信息，根据结构体前四个字节为符号名称，可以看到为0x3d*/
+ 4002e0 00000000 00000000 00000000 00000000  ................  /*该值为相对于.dynstr段的偏移，可以看到下面.dynstr偏移0x3d处为字符串write，st_shndx为0x12，即.plt节*/
+ 4002f0 11000000 12000000 00000000 00000000  ................
+ 400300 00000000 00000000 24000000 12000000  ........$.......
+ 400310 00000000 00000000 00000000 00000000  ................
+ 400320 18000000 12000000 00000000 00000000  ................
+ 400330 00000000 00000000 2b000000 12000000  ........+.......
+ 400340 00000000 00000000 00000000 00000000  ................
+ 400350 43000000 20000000 00000000 00000000  C... ...........
+ 400360 00000000 00000000 1d000000 11001900  ................
+ 400370 50106000 00000000 08000000 00000000  P.`.............
+ 400380 0b000000 11001900 58106000 00000000  ........X.`.....
+ 400390 08000000 00000000                    ........        
+
+
+
+[root@VM_14_30_centos ~/retdlresolve]# objdump -s -j .dynstr demo
+demo:     file format elf64-x86-64
+
+Contents of section .dynstr:
+ 400398 006c6962 632e736f 2e360073 7464696e  .libc.so.6.stdin
+ 4003a8 00737472 6c656e00 72656164 00737464  .strlen.read.std
+ 4003b8 6f757400 73657462 7566005f 5f6c6962  out.setbuf.__lib
+ 4003c8 635f7374 6172745f 6d61696e 00777269  c_start_main.wri   /*偏移0x3d*/
+ 4003d8 7465005f 5f676d6f 6e5f7374 6172745f  te.__gmon_start_
+ 4003e8 5f00474c 4942435f 322e322e 3500      _.GLIBC_2.2.5.  
+
+ [root@VM_14_30_centos ~/retdlresolve]# readelf -S demo|grep "\[12\]"
+ [12] .plt              PROGBITS         0000000000400520  00000520
+
+(gdb) print _dl_runtime_resolve_xsavec
+$4 = {<text variable, no debug info>} 0x7ffff7df0f80 <_dl_runtime_resolve_xsavec>
+(gdb) x /24xb 0x601000     /*查看.got.plt中保存内容*/
+0x601000:       0x28    0x0e    0x60    0x00    0x00    0x00    0x00    0x00
+0x601008:       0x50    0xe1    0xff    0xf7    0xff    0x7f    0x00    0x00
+0x601010:       0x80    0x0f    0xdf    0xf7    0xff    0x7f    0x00    0x00
+(gdb) print /x 0x7ffff7df0f80
+$6 = 0x7ffff7df0f80
+(gdb) print /x 0x7ffff7df0f80-0x7ffff7ddb000
+$7 = 0x15f80       /*查看_dl_runtime_resolve_xsavec在ld中的地址即为该值*/
+
+21693 0000000000015f80 <_dl_runtime_resolve_xsavec>:
+21694    15f80:   53                      push   %rbx
+21695    15f81:   48 89 e3                mov    %rsp,%rbx
+
+
