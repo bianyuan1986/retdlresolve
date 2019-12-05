@@ -1,4 +1,5 @@
-.rela.plt节是用于函数重定位，.rela.dyn节是用于变量重定位。.rela.plt节相关的Elf32_Rel结构如下:
+
+/*.rela.plt节是用于函数重定位，.rela.dyn节是用于变量重定位。.rela.plt节相关的Elf32_Rel结构如下:*/
 
 typedef struct elf64_rel {
   Elf64_Addr r_offset;	/* Location at which to apply the action */
