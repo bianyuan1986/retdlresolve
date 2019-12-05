@@ -1,4 +1,4 @@
-.rel.plt节是用于函数重定位，.rel.dyn节是用于变量重定位。.rel.plt节相关的Elf32_Rel结构如下:
+.rela.plt节是用于函数重定位，.rela.dyn节是用于变量重定位。.rela.plt节相关的Elf32_Rel结构如下:
 
 typedef struct elf64_rel {
   Elf64_Addr r_offset;	/* Location at which to apply the action */
@@ -54,7 +54,8 @@ Contents of section .rela.plt:
 
 
 
-/*第1项保存.dynamic节的地址，第2项保存link_map的地址，第3项保存dl_resolve的地址，需要加载镜像后才会保存对应地址*/
+/*第1项保存.dynamic节的地址，第2项保存struct link_map的地址，第3项保存dl_resolve的地址，需要加载镜像后才会保存对应地址*/
+/*glibc中的link.h有struct link_map的定义，每个link_map描述一个加载的共享对象信息，包括内存的映射布局*/
 /*.got节保存全局变量偏移表，.got.plt节保存全局函数偏移表，.got.plt属于数据段，所以可以在运行时修改*/
 [root@VM_14_30_centos ~/retdlresolve]# objdump -s -j .got.plt demo
 demo:     file format elf64-x86-64
@@ -71,19 +72,19 @@ Contents of section .got.plt:
 Disassembly of section .plt:
 
 0000000000400520 <write@plt-0x10>:
-  400520:	ff 35 e2 0a 20 00    	pushq  0x200ae2(%rip)        # 601008 <_GLOBAL_OFFSET_TABLE_+0x8>    /*把.got.plt中第二项的地址入栈*/
+  400520:	ff 35 e2 0a 20 00    	pushq  0x200ae2(%rip)        # 601008 <_GLOBAL_OFFSET_TABLE_+0x8>    /*把.got.plt中第二项的地址入栈，即struct link_map的地址入栈*/
   400526:	ff 25 e4 0a 20 00    	jmpq   *0x200ae4(%rip)        # 601010 <_GLOBAL_OFFSET_TABLE_+0x10>   /*调用.got.plt中第三项保存的_dl_runtime_resolve_xsavec函数*/
   40052c:	0f 1f 40 00          	nopl   0x0(%rax)
 
 0000000000400530 <write@plt>:
   400530:	ff 25 e2 0a 20 00    	jmpq   *0x200ae2(%rip)        # 601018 <_GLOBAL_OFFSET_TABLE_+0x18>   /*跳转到.got.plt中对应的地址处存储的write的地址，在第一次访问时还未*/
   400536:	68 00 00 00 00       	pushq  $0x0                             /*完成重定位，此时0x601018处保存的地址就是当前指令的下一条指令的地址，所以相当于会跳转回0x400536处*/
-  40053b:	e9 e0 ff ff ff       	jmpq   400520 <_init+0x20>   /*push指令主要是为了调用解析函数前准备参数*/
+  40053b:	e9 e0 ff ff ff       	jmpq   400520 <_init+0x20>   /*push指令主要是为了调用解析函数前准备参数，把该项在.rela.plt中对应的符号索引项入栈，此处write为0*/
 
 0000000000400540 <strlen@plt>:
   400540:	ff 25 da 0a 20 00    	jmpq   *0x200ada(%rip)        # 601020 <_GLOBAL_OFFSET_TABLE_+0x20>
   400546:	68 01 00 00 00       	pushq  $0x1
-  40054b:	e9 d0 ff ff ff       	jmpq   400520 <_init+0x20>     /*每一项都会跳转到第一项*/
+  40054b:	e9 d0 ff ff ff       	jmpq   400520 <_init+0x20>     /*每一项都会跳转到第一项，把struct link_map的地址入栈然后调用ld中的重定向函数*/
 
 0000000000400550 <setbuf@plt>:
   400550:	ff 25 d2 0a 20 00    	jmpq   *0x200ad2(%rip)        # 601028 <_GLOBAL_OFFSET_TABLE_+0x28>
@@ -189,5 +190,23 @@ $7 = 0x15f80       /*查看_dl_runtime_resolve_xsavec在ld中的地址即为该�
 21693 0000000000015f80 <_dl_runtime_resolve_xsavec>:
 21694    15f80:   53                      push   %rbx
 21695    15f81:   48 89 e3                mov    %rsp,%rbx
+
+/*最终通过调用_dl_fixup来完成符号的重定位*/
+_dl_fixup(struct link_map *l, ElfW(Word) reloc_arg)
+{
+	// 首先通过参数reloc_arg计算重定位入口，这里的JMPREL即.rel.plt，reloc_offset即reloc_arg
+	const PLTREL *const reloc = (const void *) (D_PTR (l, l_info[DT_JMPREL]) + reloc_offset);
+	// 然后通过reloc->r_info找到.dynsym中对应的条目
+	const ElfW(Sym) *sym = &symtab[ELFW(R_SYM) (reloc->r_info)];
+	// 这里还会检查reloc->r_info的最低位是不是R_386_JUMP_SLOT=7
+	assert (ELFW(R_TYPE)(reloc->r_info) == ELF_MACHINE_JMP_SLOT);
+	// 接着通过strtab+sym->st_name找到符号表字符串，result为libc基地址
+	result = _dl_lookup_symbol_x (strtab + sym->st_name, l, &sym, l->l_scope, version, ELF_RTYPE_CLASS_PLT, flags, NULL);
+	// value为libc基址加上要解析函数的偏移地址，也即实际地址
+	value = DL_FIXUP_MAKE_VALUE (result, sym ? (LOOKUP_VALUE_ADDRESS (result) + sym->st_value) : 0);
+	// 最后把value写入相应的GOT表条目中
+	return elf_machine_fixup_plt (l, result, reloc, rel_addr, value);
+}
+
 
 
