@@ -54,6 +54,14 @@ Contents of section .rela.plt:
  4004f0 07000000 06000000 00000000 00000000  ................
 
 
+.dynamic节中的节点类型
+typedef struct {
+  Elf64_Sxword d_tag;		/* entry tag value */
+  union {
+    Elf64_Xword d_val;
+    Elf64_Addr d_ptr;
+  } d_un;
+} Elf64_Dyn;
 
 /*第1项保存.dynamic节的地址，第2项保存struct link_map的地址，第3项保存dl_resolve的地址，需要加载镜像后才会保存对应地址*/
 /*glibc中的link.h有struct link_map的定义，每个link_map描述一个加载的共享对象信息，包括内存的映射布局*/
@@ -195,7 +203,7 @@ $7 = 0x15f80       /*查看_dl_runtime_resolve_xsavec在ld中的地址即为该�
 /*最终通过调用_dl_fixup来完成符号的重定位*/
 _dl_fixup(struct link_map *l, ElfW(Word) reloc_arg)
 {
-	// 首先通过参数reloc_arg计算重定位入口，这里的JMPREL即.rel.plt，reloc_offset即reloc_arg
+	// 首先通过参数reloc_arg计算重定位入口，这里的DT_JMPREL对应.rel.plt，reloc_offset即reloc_arg
 	const PLTREL *const reloc = (const void *) (D_PTR (l, l_info[DT_JMPREL]) + reloc_offset);
 	// 然后通过reloc->r_info找到.dynsym中对应的条目
 	const ElfW(Sym) *sym = &symtab[ELFW(R_SYM) (reloc->r_info)];
@@ -205,7 +213,7 @@ _dl_fixup(struct link_map *l, ElfW(Word) reloc_arg)
 	result = _dl_lookup_symbol_x (strtab + sym->st_name, l, &sym, l->l_scope, version, ELF_RTYPE_CLASS_PLT, flags, NULL);
 	// value为libc基址加上要解析函数的偏移地址，也即实际地址
 	value = DL_FIXUP_MAKE_VALUE (result, sym ? (LOOKUP_VALUE_ADDRESS (result) + sym->st_value) : 0);
-	// 最后把value写入相应的GOT表条目中
+	// 最后把value写入相应的.got.plt表条目中
 	return elf_machine_fixup_plt (l, result, reloc, rel_addr, value);
 }
 
