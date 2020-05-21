@@ -218,4 +218,107 @@ _dl_fixup(struct link_map *l, ElfW(Word) reloc_arg)
 }
 
 
+#开启-fstack-protector查看canary是如何生成的
+gcc -fstack-protector -g demo.c -o demo
+
+
+/* This vector is normally only used by the program interpreter.  The
+   usual definition in an ABI supplement uses the name auxv_t.  The
+   vector is not usually defined in a standard <elf.h> file, but it
+   can't hurt.  We rename it to avoid conflicts.  The sizes of these
+   types are an arrangement between the exec server and the program
+   interpreter, so we don't fully specify them here.  */
+
+typedef struct
+{
+  uint32_t a_type;		/* Entry type */
+  union
+    {
+      uint32_t a_val;		/* Integer value */
+      /* We use to have pointer elements added here.  We cannot do that,
+	 though, since it does not work when using 32-bit definitions
+	 on 64-bit platforms and vice versa.  */
+    } a_un;
+} Elf32_auxv_t;
+
+typedef struct
+{
+  uint64_t a_type;		/* Entry type */
+  union
+    {
+      uint64_t a_val;		/* Integer value */
+      /* We use to have pointer elements added here.  We cannot do that,
+	 though, since it does not work when using 32-bit definitions
+	 on 64-bit platforms and vice versa.  */
+    } a_un;
+} Elf64_auxv_t;
+
+(gdb) break vuln
+Breakpoint 1 at 0x4006f8: file demo.c, line 6.
+(gdb) run
+Starting program: /root/retdlresolve/./demo 
+Welcome to XDCTF2015~!
+
+Breakpoint 1, vuln () at demo.c:6
+6       {
+	Missing separate debuginfos, use: debuginfo-install glibc-2.17-196.tl2.3.x86_64
+		(gdb) info auxv   /*canary的生成和AT_RANDOM项有关*/
+		33   AT_SYSINFO_EHDR      System-supplied DSO's ELF header 0x7ffff7ffa000
+		16   AT_HWCAP             Machine-dependent CPU capability hints 0x1f8bfbff
+		6    AT_PAGESZ            System page size               4096
+		17   AT_CLKTCK            Frequency of times()           100
+		3    AT_PHDR              Program headers for program    0x400040
+		4    AT_PHENT             Size of program header entry   56
+		5    AT_PHNUM             Number of program headers      9
+		7    AT_BASE              Base address of interpreter    0x7ffff7ddb000
+		8    AT_FLAGS             Flags                          0x0
+		9    AT_ENTRY             Entry point of program         0x400600
+		11   AT_UID               Real user ID                   0
+		12   AT_EUID              Effective user ID              0
+		13   AT_GID               Real group ID                  0
+		14   AT_EGID              Effective group ID             0
+		23   AT_SECURE            Boolean, was exec setuid-like? 0
+		25   AT_RANDOM            Address of 16 random bytes     0x7fffffffe679
+		31   AT_EXECFN            File name of executable        0x7fffffffefde "/root/retdlresolve/./demo"
+		15   AT_PLATFORM          String identifying platform    0x7fffffffe689 "x86_64"
+		0    AT_NULL              End of vector                  0x0
+		(gdb) x /16xb 0x7fffffffe679    /*查看该地址处的16字节内容*/
+		0x7fffffffe679: 0x1e    0xa2    0x2a    0xe0    0xa3    0x06    0xda    0xa1
+		0x7fffffffe681: 0xa8    0x62    0x58    0x2c    0x59    0x19    0x9c    0x6e
+		(gdb) bt          
+		#0  vuln () at demo.c:6
+		#1  0x00000000004007f8 in main (argc=1, argv=0x7fffffffe428) at demo.c:17
+		(gdb) disassemble     /*$fs+0x28处存放的是canary的值，该地址无法直接访问*/
+		Dump of assembler code for function vuln:
+		0x00000000004006f0 <+0>:     push   %rbp
+		0x00000000004006f1 <+1>:     mov    %rsp,%rbp
+		0x00000000004006f4 <+4>:     sub    $0x70,%rsp
+	 => 0x00000000004006f8 <+8>:     mov    %fs:0x28,%rax
+		0x0000000000400701 <+17>:    mov    %rax,-0x8(%rbp)
+		0x0000000000400705 <+21>:    xor    %eax,%eax
+		0x0000000000400707 <+23>:    mov    0x20095a(%rip),%rax        # 0x601068 <stdin@@GLIBC_2.2.5>
+		0x000000000040070e <+30>:    lea    -0x70(%rbp),%rdx
+		0x0000000000400712 <+34>:    mov    %rdx,%rsi
+		0x0000000000400715 <+37>:    mov    %rax,%rdi
+		0x0000000000400718 <+40>:    callq  0x4005c0 <setbuf@plt>
+		0x000000000040071d <+45>:    lea    -0x70(%rbp),%rax
+		0x0000000000400721 <+49>:    mov    $0x100,%edx
+		0x0000000000400726 <+54>:    mov    %rax,%rsi
+		0x0000000000400729 <+57>:    mov    $0x0,%edi
+		0x000000000040072e <+62>:    callq  0x4005d0 <read@plt>
+		0x0000000000400733 <+67>:    mov    -0x8(%rbp),%rax
+		0x0000000000400737 <+71>:    xor    %fs:0x28,%rax
+		0x0000000000400740 <+80>:    je     0x400747 <vuln+87>
+		0x0000000000400742 <+82>:    callq  0x4005b0 <__stack_chk_fail@plt>
+		0x0000000000400747 <+87>:    leaveq 
+		0x0000000000400748 <+88>:    retq   
+		End of assembler dump.
+		(gdb) print $rax
+		$1 = 0
+		(gdb) stepi
+		0x0000000000400701      6       {
+		(gdb) print /x $rax  /*单步执行后查看$rax寄存器内容，可以看到跟AT_RANDOM项中指向的内容符合*/
+		$3 = 0xa1da06a3e02aa200
+
+
 
