@@ -336,4 +336,11 @@ Breakpoint 1, vuln () at demo.c:6
 		}
 
 
+To be secure, the canary must ensure at least the following properties:
+1:not predictable (must be generated from a source with good entropy)
+2:be located in a non-accessible location
+3:cannot be brute-forced
+4:should always contain at least one termination character
+
+
 
