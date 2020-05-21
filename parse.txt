@@ -320,5 +320,20 @@ Breakpoint 1, vuln () at demo.c:6
 		(gdb) print /x $rax  /*单步执行后查看$rax寄存器内容，可以看到跟AT_RANDOM项中指向的内容符合*/
 		$3 = 0xa1da06a3e02aa200
 
+		/*查看glibc的代码，此处实际定义了函数__libc_start_main，可执行程序的入口函数_start函数会调用该函数*/
+		STATIC int LIBC_START_MAIN (int (*main) (int, char **, char ** MAIN_AUXVEC_DECL),
+						 int argc, char *__unbounded *__unbounded ubp_av,
+#ifdef LIBC_START_MAIN_AUXVEC_ARG
+						 ElfW(auxv_t) *__unbounded auxvec,
+#endif
+						 __typeof (main) init,
+						 void (*fini) (void),
+						 void (*rtld_fini) (void), void *__unbounded stack_end)
+		{
+			/*do something*/
+			/*根据_dl_random生成canary*/
+			uintptr_t stack_chk_guard = _dl_setup_stack_chk_guard (_dl_random);
+		}
+
 
 
